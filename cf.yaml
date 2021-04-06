@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CF for spam-detector
+
+Parameters:
+  EndpointName:
+    Type: String
+    Description: endpoint of Sagemaker
+  S3BucketName:
+    Type: String
+    Default: spam-detect-email-hw3
+    Description: bucket stores email
+  Domain:
+    Type: String
+    Default: 6998hw3.com
+    Description: verified domain
+    
+Resources:
+  LambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn:
+      - LambdaIamRole
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Role:  !GetAtt LambdaIamRole.Arn
+      
+      Code:
+        S3Bucket: spam-detector-lambda
+        S3Key: lambda_function.zip
+      Runtime: python3.8
+      Environment:
+        Variables:
+          ENDPOINT_NAME: !Ref EndpointName
+      Timeout: 600
+      TracingConfig:
+        Mode: Active
+
+  LambdaS3Permission:
+    Type: AWS::Lambda::Permission
+    DependsOn: 
+      - LambdaFunction
+    Properties:
+      FunctionName: !GetAtt LambdaFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn:
+        Fn::Join: 
+          - ""
+          - 
+            - "arn:aws:s3:::"
+            - 
+              Ref: "S3BucketName"
+
+  LambdaIamRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: spam-watcher-role-hw3 
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AWSLambda_FullAccess"
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+        - "arn:aws:iam::aws:policy/AmazonSESFullAccess"
+        - "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+
+  SESRule:
+    Type: 'AWS::SES::ReceiptRule'
+    DependsOn:
+      - S3BucketPolicy
+    Properties:
+      Rule:
+        Name: spam-detector
+        Enabled: true
+        Recipients:
+          - !Ref Domain
+        Actions:
+          - S3Action:
+              BucketName: !Ref S3Bucket
+      RuleSetName: spam-detector-hw3
+  SESRuleSet:
+    Type: 'AWS::SES::ReceiptRuleSet'
+    Properties:
+      RuleSetName: spam-detector-hw3
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    DependsOn: 
+      - LambdaFunction
+      - LambdaS3Permission 
+    Properties:
+      BucketName: !Ref S3BucketName
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:Put'
+            Function: !GetAtt LambdaFunction.Arn
+
+  S3BucketPolicy: 
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: 
+        Ref: "S3Bucket"
+      PolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "s3:PutObject"
+            Effect: "Allow"
+            Resource: 
+              Fn::Join: 
+                - ""
+                - 
+                  - "arn:aws:s3:::"
+                  - 
+                    Ref: "S3Bucket"
+                  - "/*"
+            Principal: "*"
+
+  
